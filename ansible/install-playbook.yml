@@ -1,0 +1,165 @@
+---
+- name: Install Validator Launcher
+  hosts: localhost
+  become: yes
+  vars:
+    validator_launcher_path: "{{ ansible_env.PWD }}"
+    service_name: "validator-launcher"
+    build_user: "{{ ansible_env.SUDO_USER | default('root') }}"
+    
+  tasks:
+    - name: Check if Ansible is installed
+      command: ansible --version
+      register: ansible_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install Ansible if not present
+      apt:
+        name:
+          - ansible
+        state: present
+        update_cache: yes
+      when: ansible_check.rc != 0
+
+    - name: Install Ansible collections
+      command: ansible-galaxy collection install -r requirements.yml
+      args:
+        chdir: "{{ validator_launcher_path }}/ansible"
+      when: ansible_check.rc != 0
+      ignore_errors: yes
+
+    - name: Ensure build dependencies are installed
+      apt:
+        name:
+          - git
+          - curl
+          - build-essential
+          - pkg-config
+          - libssl-dev
+        state: present
+        update_cache: yes
+
+    - name: Install Rust if not present
+      shell: |
+        if ! command -v rustc &> /dev/null; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+        fi
+      args:
+        creates: /home/{{ build_user }}/.cargo/bin/rustc
+      become_user: "{{ build_user }}"
+      environment:
+        HOME: "/home/{{ build_user }}"
+
+    - name: Build validator-launcher
+      shell: |
+        cd {{ validator_launcher_path }}
+        export PATH="$HOME/.cargo/bin:$PATH"
+        cargo build --release
+      become_user: "{{ build_user }}"
+      environment:
+        PATH: "/home/{{ build_user }}/.cargo/bin:{{ ansible_env.PATH }}"
+        HOME: "/home/{{ build_user }}"
+
+    - name: Find built binary
+      shell: |
+        cd {{ validator_launcher_path }}
+        ls -1 target/release/validator-* 2>/dev/null | grep -v "\.d$" | head -1
+      register: binary_path
+      become_user: "{{ build_user }}"
+      changed_when: false
+
+    - name: Install validator-launcher binary
+      copy:
+        src: "{{ binary_path.stdout }}"
+        dest: /usr/local/bin/validator-launcher
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: yes
+
+    - name: Create platform CLI alias
+      file:
+        src: /usr/local/bin/validator-launcher
+        dest: /usr/local/bin/platform
+        state: link
+        force: yes
+
+    - name: Install dstack services startup scripts
+      copy:
+        src: "{{ validator_launcher_path }}/scripts/{{ item }}"
+        dest: /usr/local/bin/{{ item }}
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - start-dstack-services.sh
+        - stop-dstack-services.sh
+      when: validator_launcher_path is defined
+
+    - name: Create systemd service file
+      copy:
+        content: |
+          [Unit]
+          Description=Validator Launcher Service
+          After=network.target
+          Requires=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/root
+          ExecStartPre=/usr/local/bin/start-dstack-services.sh
+          ExecStart=/usr/local/bin/validator-launcher run
+          ExecStopPost=/usr/local/bin/stop-dstack-services.sh
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+
+          # Environment variables
+          Environment="RUST_LOG=info"
+          Environment="VMM_URL=http://localhost:10300"
+          Environment="DSTACK_DIR=/home/ubuntu/meta-dstack/build"
+          Environment="LOG_DIR=/var/log/dstack"
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/validator-launcher.service
+        mode: '0644'
+      notify: reload systemd
+
+    - name: Display installation summary
+      debug:
+        msg:
+          - "=========================================="
+          - "Installation Complete!"
+          - "=========================================="
+          - "Binary installed: /usr/local/bin/validator-launcher"
+          - "CLI alias created: /usr/local/bin/platform"
+          - "Systemd service: validator-launcher.service"
+          - ""
+          - "Next steps:"
+          - "1. Configure environment variables:"
+          - "   platform config set-env HOTKEY_PASSPHRASE \"your-passphrase\""
+          - "   platform config set-env VALIDATOR_BASE_URL \"http://10.0.2.2:18080\""
+          - ""
+          - "2. Enable and start the service:"
+          - "   sudo systemctl enable validator-launcher"
+          - "   sudo systemctl start validator-launcher"
+          - ""
+          - "3. Check service status:"
+          - "   sudo systemctl status validator-launcher"
+          - "   sudo journalctl -u validator-launcher -f"
+          - ""
+          - "4. (Optional) Enable auto-update:"
+          - "   cd {{ validator_launcher_path }}/ansible"
+          - "   sudo ./install-updater.sh"
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
+

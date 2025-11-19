@@ -1,12 +1,15 @@
 [Unit]
 Description=Validator Launcher Service
 After=network.target
+Requires=network.target
 
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory={{ validator_launcher_path }}
+User=root
+WorkingDirectory=/root
+ExecStartPre=/usr/local/bin/start-dstack-services.sh
 ExecStart=/usr/local/bin/validator-launcher run
+ExecStopPost=/usr/local/bin/stop-dstack-services.sh
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -15,6 +18,8 @@ StandardError=journal
 # Environment variables
 Environment="RUST_LOG=info"
 Environment="VMM_URL=http://localhost:10300"
+Environment="DSTACK_DIR=/home/ubuntu/meta-dstack/build"
+Environment="LOG_DIR=/var/log/dstack"
 
 [Install]
 WantedBy=multi-user.target

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install script for validator-launcher auto-updater
+# Install script for validator-launcher updater
 # This script sets up a systemd timer to run the Ansible playbook every 5 minutes
 
 set -e
@@ -7,7 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ANSIBLE_DIR="$SCRIPT_DIR"
 
-echo "Installing validator-launcher auto-updater..."
+echo "Installing validator-launcher updater..."
 
 # Create systemd service
 sudo tee /etc/systemd/system/validator-launcher-updater.service > /dev/null <<EOF
@@ -49,7 +49,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable validator-launcher-updater.timer
 sudo systemctl start validator-launcher-updater.timer
 
-echo "✓ Validator launcher auto-updater installed successfully"
+echo "✓ Validator launcher updater installed successfully"
 echo ""
 echo "Status:"
 sudo systemctl status validator-launcher-updater.timer --no-pager -l

@@ -27,7 +27,7 @@ ansible-galaxy collection install -r requirements.yml
 ### Local Execution (on target machine)
 
 ```bash
-cd /home/ubuntu/validator-auto-updater/ansible
+cd /home/ubuntu/validator-launcher/ansible
 ansible-playbook -i localhost, -c local playbook.yml
 ```
 
@@ -83,7 +83,7 @@ sudo journalctl -u validator-launcher -f
 To install the auto-update system that checks for updates every 5 minutes:
 
 ```bash
-cd /home/ubuntu/validator-auto-updater/ansible
+cd /home/ubuntu/validator-launcher/ansible
 sudo ./install-updater.sh
 ```
 
@@ -114,7 +114,7 @@ If you prefer using cron instead of systemd timer:
 
 ```bash
 # Add to crontab (crontab -e)
-*/5 * * * * cd /home/ubuntu/validator-auto-updater/ansible && /usr/bin/ansible-playbook -i localhost, -c local playbook.yml >> /var/log/validator-launcher-update.log 2>&1
+*/5 * * * * cd /home/ubuntu/validator-launcher/ansible && /usr/bin/ansible-playbook -i localhost, -c local playbook.yml >> /var/log/validator-launcher-update.log 2>&1
 ```
 
 This will run the playbook every 5 minutes.

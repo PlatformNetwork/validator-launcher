@@ -97,17 +97,26 @@
         needs_rebuild: false
       when: repo_exists.stat.exists and not git_update.changed | default(false)
 
+    - name: Find binary name
+      shell: |
+        cd {{ validator_launcher_path }}
+        ls -1 target/release/validator-* 2>/dev/null | grep -v "\.d$" | head -1 || echo ""
+      register: existing_binary_path
+      become_user: "{{ build_user }}"
+      when: repo_exists.stat.exists and not needs_rebuild | default(false)
+      changed_when: false
+
     - name: Check if binary needs rebuild (compare timestamps)
       stat:
-        path: "{{ validator_launcher_path }}/target/release/validator-launcher"
+        path: "{{ existing_binary_path.stdout }}"
       register: binary_stat
-      when: repo_exists.stat.exists and not needs_rebuild | default(false)
+      when: repo_exists.stat.exists and not needs_rebuild | default(false) and existing_binary_path.stdout != ''
 
     - name: Check if source is newer than binary
       shell: |
         cd {{ validator_launcher_path }}
         if [ -f target/release/validator-launcher ]; then
-          find src Cargo.toml -newer target/release/validator-launcher | head -1
+          find src Cargo.toml -newer target/release/validator-* | head -1
         else
           echo "rebuild"
         fi
@@ -131,15 +140,44 @@
       environment:
         PATH: "/home/{{ build_user }}/.cargo/bin:{{ ansible_env.PATH }}"
 
+    - name: Check binary name
+      shell: |
+        cd {{ validator_launcher_path }}
+        ls -1 target/release/validator-* 2>/dev/null | grep -v "\.d$" | head -1
+      register: binary_path
+      become_user: "{{ build_user }}"
+      when: not repo_exists.stat.exists or needs_rebuild | default(true)
+      changed_when: false
+
     - name: Install validator-launcher binary
       copy:
-        src: "{{ validator_launcher_path }}/target/release/validator-launcher"
+        src: "{{ binary_path.stdout }}"
         dest: /usr/local/bin/validator-launcher
         owner: root
         group: root
         mode: '0755'
         remote_src: yes
-      when: not repo_exists.stat.exists or needs_rebuild | default(true)
+      when: (not repo_exists.stat.exists or needs_rebuild | default(true)) and binary_path.stdout != ''
+
+    - name: Create platform CLI alias
+      file:
+        src: /usr/local/bin/validator-launcher
+        dest: /usr/local/bin/platform
+        state: link
+        force: yes
+      when: (not repo_exists.stat.exists or needs_rebuild | default(true)) and binary_path.stdout != ''
+
+    - name: Install dstack services startup scripts
+      copy:
+        src: "{{ validator_launcher_path }}/scripts/{{ item }}"
+        dest: /usr/local/bin/{{ item }}
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - start-dstack-services.sh
+        - stop-dstack-services.sh
 
     - name: Create systemd service file
       template:
