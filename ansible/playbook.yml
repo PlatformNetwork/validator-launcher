@@ -1,0 +1,177 @@
+---
+- name: Update and deploy validator-launcher
+  hosts: localhost
+  become: yes
+  vars:
+    validator_launcher_repo: "https://github.com/PlatformNetwork/validator-launcher.git"
+    validator_launcher_path: "/home/ubuntu/validator-launcher"
+    validator_launcher_branch: "main"
+    service_name: "validator-launcher"
+    build_user: "ubuntu"
+    
+  tasks:
+    - name: Ensure build dependencies are installed
+      apt:
+        name:
+          - git
+          - curl
+          - build-essential
+          - pkg-config
+          - libssl-dev
+        state: present
+        update_cache: yes
+
+    - name: Install Rust if not present
+      shell: |
+        if ! command -v rustc &> /dev/null; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+        fi
+      args:
+        creates: /home/{{ build_user }}/.cargo/bin/rustc
+      become_user: "{{ build_user }}"
+
+    - name: Ensure validator-launcher directory exists
+      file:
+        path: "{{ validator_launcher_path }}"
+        state: directory
+        owner: "{{ build_user }}"
+        group: "{{ build_user }}"
+        mode: '0755'
+
+    - name: Check if repository exists
+      stat:
+        path: "{{ validator_launcher_path }}/.git"
+      register: repo_exists
+
+    - name: Clone validator-launcher repository
+      git:
+        repo: "{{ validator_launcher_repo }}"
+        dest: "{{ validator_launcher_path }}"
+        version: "{{ validator_launcher_branch }}"
+        force: yes
+      when: not repo_exists.stat.exists
+      become_user: "{{ build_user }}"
+
+    - name: Get current commit hash before update
+      shell: |
+        cd {{ validator_launcher_path }}
+        git rev-parse HEAD
+      register: git_before
+      become_user: "{{ build_user }}"
+      when: repo_exists.stat.exists
+      changed_when: false
+
+    - name: Update validator-launcher repository
+      git:
+        repo: "{{ validator_launcher_repo }}"
+        dest: "{{ validator_launcher_path }}"
+        version: "{{ validator_launcher_branch }}"
+        update: yes
+        force: yes
+      register: git_update
+      become_user: "{{ build_user }}"
+      when: repo_exists.stat.exists
+
+    - name: Get current commit hash after update
+      shell: |
+        cd {{ validator_launcher_path }}
+        git rev-parse HEAD
+      register: git_after
+      become_user: "{{ build_user }}"
+      when: repo_exists.stat.exists
+      changed_when: false
+
+    - name: Set default needs_rebuild to true for new repos
+      set_fact:
+        needs_rebuild: true
+      when: not repo_exists.stat.exists
+
+    - name: Check if rebuild is needed (compare commit hashes)
+      set_fact:
+        needs_rebuild: "{{ git_before.stdout | default('') != git_after.stdout | default('') }}"
+      when: repo_exists.stat.exists and git_update.changed | default(false)
+
+    - name: Set needs_rebuild to false if no update occurred
+      set_fact:
+        needs_rebuild: false
+      when: repo_exists.stat.exists and not git_update.changed | default(false)
+
+    - name: Check if binary needs rebuild (compare timestamps)
+      stat:
+        path: "{{ validator_launcher_path }}/target/release/validator-launcher"
+      register: binary_stat
+      when: repo_exists.stat.exists and not needs_rebuild | default(false)
+
+    - name: Check if source is newer than binary
+      shell: |
+        cd {{ validator_launcher_path }}
+        if [ -f target/release/validator-launcher ]; then
+          find src Cargo.toml -newer target/release/validator-launcher | head -1
+        else
+          echo "rebuild"
+        fi
+      register: source_newer
+      become_user: "{{ build_user }}"
+      when: repo_exists.stat.exists and not needs_rebuild | default(false) and binary_stat.stat.exists
+      changed_when: false
+
+    - name: Set needs_rebuild if source files are newer
+      set_fact:
+        needs_rebuild: true
+      when: repo_exists.stat.exists and not needs_rebuild | default(false) and source_newer.stdout | default('') != ''
+
+    - name: Build validator-launcher
+      shell: |
+        cd {{ validator_launcher_path }}
+        export PATH="$HOME/.cargo/bin:$PATH"
+        cargo build --release
+      become_user: "{{ build_user }}"
+      when: not repo_exists.stat.exists or needs_rebuild | default(true)
+      environment:
+        PATH: "/home/{{ build_user }}/.cargo/bin:{{ ansible_env.PATH }}"
+
+    - name: Install validator-launcher binary
+      copy:
+        src: "{{ validator_launcher_path }}/target/release/validator-launcher"
+        dest: /usr/local/bin/validator-launcher
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: yes
+      when: not repo_exists.stat.exists or needs_rebuild | default(true)
+
+    - name: Create systemd service file
+      template:
+        src: templates/validator-launcher.service.j2
+        dest: /etc/systemd/system/validator-launcher.service
+        mode: '0644'
+      notify: reload systemd
+
+    - name: Ensure validator-launcher service is enabled and started
+      systemd:
+        name: validator-launcher
+        enabled: yes
+        state: restarted
+        daemon_reload: yes
+      when: not repo_exists.stat.exists or needs_rebuild | default(true)
+      ignore_errors: yes
+
+    - name: Display update status
+      debug:
+        msg:
+          - "=== Validator Launcher Update Status ==="
+          - "Repository: {{ validator_launcher_repo }}"
+          - "Path: {{ validator_launcher_path }}"
+          - "Branch: {{ validator_launcher_branch }}"
+          - "Repository updated: {{ git_update.changed | default(false) }}"
+          - "Rebuild needed: {{ needs_rebuild | default(true) }}"
+          - "Commit before: {{ git_before.stdout | default('N/A') }}"
+          - "Commit after: {{ git_after.stdout | default('N/A') }}"
+          - "Service restarted: {{ not repo_exists.stat.exists or needs_rebuild | default(true) }}"
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
+

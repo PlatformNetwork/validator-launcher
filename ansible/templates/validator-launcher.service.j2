@@ -1,0 +1,21 @@
+[Unit]
+Description=Validator Launcher Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory={{ validator_launcher_path }}
+ExecStart=/usr/local/bin/validator-launcher run
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment="RUST_LOG=info"
+Environment="VMM_URL=http://localhost:10300"
+
+[Install]
+WantedBy=multi-user.target
+

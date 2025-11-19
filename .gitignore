@@ -1,0 +1,38 @@
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Ansible
+ansible/.vault_pass
+ansible/roles/
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+
